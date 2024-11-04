@@ -1,36 +1,45 @@
 import * as THREE from "three";
 import * as TWEEN from "@tweenjs/tween.js";
 
+type Axis = "x" | "y" | "z";
+type Sign = -1 | 1;
 const rendererCanvas = document.getElementById(
   "rendererCanvas",
 ) as HTMLCanvasElement;
 const scene = new THREE.Scene();
-let cubes: THREE.Mesh[] = [];
-let faceCube: THREE.Object3D;
-let faces: THREE.Mesh[] = [];
-let tiny: THREE.Mesh[] = [];
 let camera: THREE.PerspectiveCamera;
-
 let renderer: THREE.WebGLRenderer;
-let raycaster: THREE.Raycaster;
-let mouse: THREE.Vector2;
+
+let cubes: THREE.Mesh[] = [];
+let faces: THREE.Mesh[] = [];
+let layer: THREE.Object3D;
+let clickedCubePos: THREE.Vector3;
+let rotationAxis: Axis;
+let clickedAxis: Axis;
+let firstIntersectedPos: { x: number; y: number; z: number };
+let layerRotationDir: "x" | "y";
+let layerRotationSign: Sign;
+let clickedAxisDir: Sign;
+
 let zoom = 8;
-
-let isIntersected: boolean;
-let downMousePosition = { x: 0, y: 0 };
-let previousMousePosition = { x: 0, y: 0 };
-
-let downcube: THREE.Mesh;
-let isMouseDown: boolean;
+let isRotatingCube = false;
+let isLayerRotationcomplete = true;
+let isLayerFound = false;
+let isMouseDown = false;
+let clickDelay = false;
+let startMousePos = { x: 0, y: 0 };
+let lastMousePos = { x: 0, y: 0 };
 let tween = new TWEEN.Tween();
-let clickDelay: boolean = false;
-let mouseUp: boolean = false;
-raycaster = new THREE.Raycaster();
-mouse = new THREE.Vector2();
-isMouseDown = false;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
 
-initThree();
-function initThree() {
+init();
+/**
+ * Initializes the scene, camera, renderer, and objects.
+ * Sets up event listeners for user interaction.
+ */
+function init() {
+  // Initialize camera and set its position
   zoom = 8;
   camera = new THREE.PerspectiveCamera(
     90,
@@ -41,20 +50,24 @@ function initThree() {
   camera.position.z = zoom;
   camera.lookAt(0, 0, 0);
 
-  // Renderer setup
+  // Renderer setup with the canvas
   renderer = new THREE.WebGLRenderer({ canvas: rendererCanvas });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // Add cube
-  let count = 0;
-  let cubeSize = 0.95;
+
+  /**
+   * Create and add cubes to the scene.
+   */
+  let cubeSize = 0.98;
   const materials = [
-    new THREE.MeshBasicMaterial({ color: 0x00ff00 }),
-    new THREE.MeshBasicMaterial({ color: 0x0000ff }),
-    new THREE.MeshBasicMaterial({ color: 0xffff00 }),
+    new THREE.MeshBasicMaterial({ color: 0x55ff55 }),
+    new THREE.MeshBasicMaterial({ color: 0x5555ff }),
+    new THREE.MeshBasicMaterial({ color: 0xffff55 }),
     new THREE.MeshBasicMaterial({ color: 0xffffff }),
-    new THREE.MeshBasicMaterial({ color: 0xff0000 }),
-    new THREE.MeshBasicMaterial({ color: 0xffa500 }),
+    new THREE.MeshBasicMaterial({ color: 0xff5555 }),
+    new THREE.MeshBasicMaterial({ color: 0xffa555 }),
   ];
+
+  // Loop through x, y, z coordinates to create and position cubes
   for (let x = -1; x <= 1; x++) {
     for (let y = -1; y <= 1; y++) {
       for (let z = -1; z <= 1; z++) {
@@ -64,21 +77,21 @@ function initThree() {
           cubeSize,
         );
         const cube = new THREE.Mesh(cubeGeometry);
+        // Assign materials to cube faces
         for (let i = 0; i < cubeGeometry.groups.length; i++) {
           cube.geometry.groups[i].materialIndex = i;
         }
         cube.material = materials;
         cube.position.set(x, y, z);
-        cube.userData["x"] = x;
-        cube.userData["y"] = -y;
-        cube.userData["z"] = -z;
-        cube.userData["id"] = count++;
         cubes.push(cube);
         scene.add(cube);
       }
     }
   }
 
+  /**
+   * Create and add invisible faces for raycasting and interaction.
+   */
   for (let y = 0; y < 3; y++) {
     for (let x = -1; x <= 1; x += 2) {
       const faceGeometry = new THREE.BoxGeometry(
@@ -86,101 +99,127 @@ function initThree() {
         y === 1 ? 0 : 3,
         y === 2 ? 0 : 3,
       );
+      // Create invisible faces with transparent material
       const face = new THREE.Mesh(
         faceGeometry,
         new THREE.MeshBasicMaterial({
           color: 0xffffff,
-          opacity: 0.2,
+          opacity: 0.0,
           transparent: true,
         }),
       );
+      // Position faces and store axis and direction data
       face.position.set(
         y === 0 ? x + x * 0.5 : 0,
         y === 1 ? x + x * 0.5 : 0,
         y === 2 ? x + x * 0.5 : 0,
       );
-      face.userData["id"] = y === 0 ? `x` : y === 1 ? "y" : "z";
+      face.userData["axis"] = y === 0 ? `x` : y === 1 ? "y" : "z";
       face.userData["dir"] = x;
       scene.add(face);
       faces.push(face);
     }
   }
 
+  // Add event listeners for user interaction
   addEventListeners();
+  requestAnimationFrame(animate);
 }
-function createtinyCube(pos: THREE.Vector3) {
-  const tinyCube = new THREE.Mesh(
-    new THREE.BoxGeometry(0.1, 0.1, 0.1),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      opacity: 0,
-      transparent: true,
-    }),
-  );
-  tinyCube.position.set(pos.x, pos.y, pos.z);
-  scene.add(tinyCube);
-  tiny.push(tinyCube);
-  return tinyCube;
-}
-function initAnimate(time: number) {
+function animate(time: number) {
   tween.update(time);
   renderer.render(scene, camera);
-  requestAnimationFrame(initAnimate);
+  requestAnimationFrame(animate);
 }
-requestAnimationFrame(initAnimate);
+
+/**
+ * Adds event listeners for mouse and touch events to the renderer canvas.
+ *
+ * @returns {void}
+ */
 function addEventListeners(): void {
+  const handleTouchStart = (e: TouchEvent) => {
+    e.preventDefault();
+    onMouseDown(e);
+  };
+
+  const handleTouchEnd = (e: TouchEvent) => {
+    e.preventDefault();
+    onMouseUp();
+  };
+
+  const handleTouchMove = (e: TouchEvent) => {
+    e.preventDefault();
+    onMouseMove(e);
+  };
+
   rendererCanvas.addEventListener("mousedown", onMouseDown);
   rendererCanvas.addEventListener("mouseup", onMouseUp);
   rendererCanvas.addEventListener("mousemove", onMouseMove);
-  rendererCanvas.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    onMouseDown(e);
-  });
-  rendererCanvas.addEventListener("touchend", (e) => {
-    e.preventDefault();
-    onMouseUp(e);
-  });
-  rendererCanvas.addEventListener("touchmove", (e) => {
-    e.preventDefault();
-    onMouseMove(e);
-  });
+  rendererCanvas.addEventListener("touchstart", handleTouchStart);
+  rendererCanvas.addEventListener("touchend", handleTouchEnd);
+  rendererCanvas.addEventListener("touchmove", handleTouchMove);
 }
 
+/**
+ * Updates the mouse position based on the provided event.
+ *
+ * This function calculates the normalized mouse coordinates within the renderer canvas,
+ * taking into account both mouse and touch events.
+ *
+ * @param {MouseEvent | TouchEvent} event - The mouse or touch event.
+ */
 function updateMousePosition(event: MouseEvent | TouchEvent): void {
-  let clientX: number;
-  let clientY: number;
-  if (event instanceof MouseEvent) {
-    clientX = event.clientX;
-    clientY = event.clientY;
-  } else {
-    clientX = event.changedTouches[0].clientX;
-    clientY = event.changedTouches[0].clientY;
-  }
+  const clientData = getClientData(event);
   const rect = rendererCanvas.getBoundingClientRect();
-  mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  mouse.x = ((clientData.x - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((clientData.y - rect.top) / rect.height) * 2 + 1;
+
+  function getClientData(event: MouseEvent | TouchEvent) {
+    /**
+     * Extracts clientX and clientY from the event.
+     *
+     * @param {MouseEvent | TouchEvent} event - The mouse or touch event.
+     * @returns {{x: number, y: number}} - An object containing the clientX and clientY coordinates.
+     */
+    let clientData = { x: 0, y: 0 };
+    if (event instanceof MouseEvent) {
+      clientData.x = event.clientX;
+      clientData.y = event.clientY;
+      return clientData;
+    }
+    clientData.x = event.changedTouches[0].clientX;
+    clientData.y = event.changedTouches[0].clientY;
+    return clientData;
+  }
 }
 
+/**
+ * Handles the mousedown event.
+ * This function is responsible for initializing the state variables related to mouse interaction
+ * and determining if a cube is being rotated or not.
+ *
+ * @param {MouseEvent | TouchEvent} event - The mouse or touch event object.
+ * @returns {void}
+ */
 function onMouseDown(event: MouseEvent | TouchEvent): void {
   if (clickDelay) return;
   clickDelay = false;
   isMouseDown = true;
   updateMousePosition(event);
-  downMousePosition.x = mouse.x;
-  downMousePosition.y = mouse.y;
-  previousMousePosition.x = downMousePosition.x;
-  previousMousePosition.y = downMousePosition.y;
-  console.log(downMousePosition);
+  startMousePos.x = mouse.x;
+  startMousePos.y = mouse.y;
+  lastMousePos.x = startMousePos.x;
+  lastMousePos.y = startMousePos.y;
 
-  let intersection = checkIntersection();
-  if (intersection.isIntersected) {
-    isIntersected = true;
-    downcube = createtinyCube(intersection.intersectedPosition);
+  const intersection = getIntersectionInfo();
+  if (intersection) {
+    isRotatingCube = true;
+    firstIntersectedPos = intersection.intersectedPosition;
     clickedCubePos = intersection.clickedCubePos;
-    clickedFace = intersection.clickedFace as "x" | "y" | "z";
-    clickedFaceDir = intersection.clickedFaceDir as -1 | 1;
+    clickedAxis = intersection.clickedAxis as Axis;
+    clickedAxisDir = intersection.clickedAxisDir as Sign;
   } else {
-    isIntersected = false;
+    isRotatingCube = false;
   }
 
   clickDelay = true;
@@ -189,109 +228,131 @@ function onMouseDown(event: MouseEvent | TouchEvent): void {
   }, 300);
 }
 
-let clickedCubePos: THREE.Vector3;
-let clickedFace: "x" | "y" | "z";
-let clickedFaceDir: -1 | 1;
-
-function onMouseUp(event: MouseEvent | TouchEvent): void {
-  console.log(event);
-  if (mouseUp) return;
+/**
+ * This function is called when the mouse button is released.
+ * It handles the completion of a layer rotation and reattaches the cubes to the scene.
+ *
+ * @returns {void}
+ */
+function onMouseUp(): void {
   isMouseDown = false;
-  foundFace = false;
-  if (isIntersected) {
-    mouseUp = true;
-    tiny.forEach((tinycube) => {
-      scene.remove(tinycube);
-    });
-    completeRotation();
-    setTimeout(() => {
-      while (faceCube.children.length > 0) {
-        scene.attach(faceCube.children[0]);
-      }
-      scene.remove(faceCube);
-      mouseUp = false;
-    }, 300);
-  }
-}
-let foundFace = false;
-let rotatelayerKey!: "x" | "y" | "z";
-
-function onMouseMove(event: MouseEvent | TouchEvent): void {
-  if (mouseUp) return;
-  if (!isMouseDown) return;
-  updateMousePosition(event);
-
-  const deltaMove = {
-    x: mouse.x - previousMousePosition.x,
-    y: mouse.y - previousMousePosition.y,
-  };
-  previousMousePosition.x = mouse.x;
-  previousMousePosition.y = mouse.y;
-
-  if (isIntersected) {
-    let bigDelta!: number;
-    let smallDelta!: number;
-    if (!foundFace) {
-      let intersection = checkIntersection();
-      if (intersection.isIntersected) {
-        let cube = createtinyCube(intersection.intersectedPosition);
-        const deltatiny: { [key in "x" | "y" | "z"]: number } = {
-          x: downcube.position.x - cube.position.x,
-          y: downcube.position.y - cube.position.y,
-          z: downcube.position.z - cube.position.z,
-        };
-
-        delete deltatiny[clickedFace];
-        const values = Object.values(deltatiny).sort(
-          (a, b) => Math.abs(a) - Math.abs(b),
-        );
-        bigDelta = Math.abs(values[1]);
-        smallDelta = Math.abs(values[0]);
-        rotatelayerKey = Object.keys(deltatiny).find(
-          (key) =>
-            Math.abs(deltatiny[key as keyof typeof deltatiny]) === smallDelta,
-        ) as keyof typeof deltatiny;
-
-        if (
-          Math.abs(bigDelta) > 0.2 &&
-          Math.abs(bigDelta) > Math.abs(smallDelta * 2)
-        ) {
-          createFace(rotatelayerKey);
-          let directionKey = Object.keys(deltatiny).find(
-            (key) =>
-              Math.abs(deltatiny[key as keyof typeof deltatiny]) === bigDelta,
-          ) as keyof typeof deltatiny;
-          direction = Math.sign(deltatiny[directionKey]) as -1 | 1;
-          if (Math.abs(deltaMove.x) > Math.abs(deltaMove.y)) {
-            mouseDir = "x";
-          } else {
-            mouseDir = "y";
-          }
-          direction *= getRotationDirection(
-            clickedFace,
-            clickedFaceDir,
-            directionKey,
-          );
-          direction *= Math.sign(deltaMove[mouseDir]);
-          foundFace = true;
-        }
-      }
-    } else {
-      rotateFace(deltaMove[mouseDir]);
+  isLayerFound = false;
+  if (!isLayerRotationcomplete) return; //handle race condition
+  if (!isRotatingCube) return;
+  isLayerRotationcomplete = false;
+  completeLayerRotation(); //complete layer rotation, remove layer reattach cubes
+  setTimeout(() => {
+    while (layer.children.length > 0) {
+      scene.attach(layer.children[0]);
     }
-  } else {
-    rotateCamera(deltaMove);
+    scene.remove(layer);
+    isLayerRotationcomplete = true;
+  }, 300);
+}
+
+/**
+ * Handles mouse movement events to control cube rotation and layer selection.
+ *
+ * If the layer rotation is not complete, it returns to avoid race conditions.
+ * If the mouse button is not pressed, it returns to avoid repeated calls.
+ * Updates the mouse position based on the event.
+ * Rotates the camera if the mouse start was outside the cube.
+ * Rotates the layer if a layer is found  when mouse moves again.
+ * Finds the layer to rotate based on mouse movement and intersection information.
+ * @param {MouseEvent | TouchEvent} event - The mouse or touch event.
+ */
+function onMouseMove(event: MouseEvent | TouchEvent): void {
+  if (!isLayerRotationcomplete) return; //to avoid race condition
+  if (!isMouseDown) return; //avoid repeated calls
+  updateMousePosition(event);
+  const mouseDelta = {
+    x: mouse.x - lastMousePos.x,
+    y: mouse.y - lastMousePos.y,
+  };
+  lastMousePos.x = mouse.x;
+  lastMousePos.y = mouse.y;
+  //rotate camera if mouse start was outside
+  if (!isRotatingCube) {
+    rotateCamera(mouseDelta);
+    return;
+  }
+  //rotate the layer if layer is found
+  if (isLayerFound) {
+    rotatelayer(mouseDelta[layerRotationDir]);
+    return;
+  }
+  //find layer to rotate
+  let deltaLarge: number;
+  let deltaSmall: number;
+  const intersection = getIntersectionInfo();
+  if (intersection) {
+    let intersectedPos = intersection.intersectedPosition;
+    const intersectedPosDelta: { [key in Axis]: number } = {
+      x: firstIntersectedPos.x - intersectedPos.x,
+      y: firstIntersectedPos.y - intersectedPos.y,
+      z: firstIntersectedPos.z - intersectedPos.z,
+    };
+
+    delete intersectedPosDelta[clickedAxis]; //delete clicked axis since rotation axis is one of other two
+    const values = Object.values(intersectedPosDelta).sort(
+      (a, b) => Math.abs(a) - Math.abs(b),
+    );
+    deltaLarge = Math.abs(values[1]); // value of rotation directon axis
+    deltaSmall = Math.abs(values[0]); //value of rotation axis
+    rotationAxis = Object.keys(intersectedPosDelta).find(
+      (key) =>
+        Math.abs(
+          intersectedPosDelta[key as keyof typeof intersectedPosDelta],
+        ) === deltaSmall,
+    ) as keyof typeof intersectedPosDelta;
+
+    //wait for delta large to be sufficiently large else the rotation axis may be ambigious.
+    if (
+      Math.abs(deltaLarge) > 0.1 &&
+      Math.abs(deltaLarge) > Math.abs(deltaSmall * 2) //one movement dominates other clearly
+    ) {
+      createlayer(rotationAxis);
+      let rotationDirectionAxis = Object.keys(intersectedPosDelta).find(
+        (key) =>
+          Math.abs(
+            intersectedPosDelta[key as keyof typeof intersectedPosDelta],
+          ) === deltaLarge,
+      ) as keyof typeof intersectedPosDelta;
+      layerRotationDir =
+        Math.abs(mouseDelta.x) > Math.abs(mouseDelta.y) ? "x" : "y";
+      layerRotationSign = Math.sign(
+        intersectedPosDelta[rotationDirectionAxis],
+      ) as Sign; //set direction of layer rotation as sign of rotaion directon axis
+      layerRotationSign *= getRotationDirection(
+        clickedAxis,
+        clickedAxisDir,
+        rotationDirectionAxis,
+      ); //multiply face specific rotation sign to layer rotation
+      layerRotationSign *= Math.sign(mouseDelta[layerRotationDir]); // multiply mouse movement sign to get final direction
+      isLayerFound = true;
+    }
   }
 }
 
+/**
+ * Determines the direction of rotation for a given interaction.
+ *
+ * @param clickedAxis The axis that was clicked.
+ * @param clickedAxisDir The direction of the click on the axis (1 or -1).
+ * @param rotationDirectionAxis The axis around which the rotation should occur.
+ *
+ * @returns 1 or -1, indicating the direction of rotation.
+ *   1 represents a clockwise rotation, and -1 represents a counterclockwise rotation.
+ *
+ */
 function getRotationDirection(
-  clickedFace: "x" | "y" | "z",
-  clickedFaceDir: 1 | -1,
-  directionKey: "x" | "y" | "z",
+  clickedAxis: Axis,
+  clickedAxisDir: Sign,
+  rotationDirectionAxis: Axis,
 ): -1 | 1 {
-  type OtherAxes<T extends "x" | "y" | "z"> = Exclude<"x" | "y" | "z", T>;
+  type OtherAxes<T extends Axis> = Exclude<Axis, T>;
   type RotationMap = {
-    [Face in "x" | "y" | "z"]: {
+    [Face in Axis]: {
       [Dir in "1" | "-1"]: {
         [Key in OtherAxes<Face>]: number;
       };
@@ -329,111 +390,144 @@ function getRotationDirection(
       },
     },
   };
-  return rotationMap[clickedFace][clickedFaceDir][
-    directionKey as OtherAxes<typeof clickedFace>
+  return rotationMap[clickedAxis][clickedAxisDir][
+    rotationDirectionAxis as OtherAxes<typeof clickedAxis>
   ];
 }
 
-let direction: -1 | 1;
-let mouseDir: "x" | "y";
-
-function checkIntersection() {
-  let intersection = {
-    isIntersected: false,
-    intersectedPosition: new THREE.Vector3(),
-    clickedCubePos: new THREE.Vector3(),
-    clickedFace: undefined as "x" | "y" | "z" | undefined,
-    clickedFaceDir: undefined as -1 | 1 | undefined,
-  };
+/**
+ * Calculates and returns intersection information when a ray is cast from the camera through the mouse position.
+ *
+ * @return An object containing information about the intersection, or null if no intersection occurs.
+ * The object contains:
+ * - intersectedPosition: The 3D point where the ray intersects the face.
+ * - clickedCubePos: The position of the cube that was intersected.
+ * - clickedAxis: The axis of the face that was intersected ("X", "Y", or "Z").
+ * - clickedAxisDir: The direction of the intersected face's axis (1 or -1).
+ */
+function getIntersectionInfo() {
   raycaster.setFromCamera(mouse, camera);
-  const cubeIntersects = raycaster.intersectObjects(cubes);
-  const faceIntersects = raycaster.intersectObjects(faces);
+  const faceIntersections = raycaster.intersectObjects(faces);
 
-  if (faceIntersects.length > 0) {
-    const intersectedCube = cubeIntersects[0].object as THREE.Mesh;
-    intersection.clickedCubePos = intersectedCube.position;
-
-    let intersectedFace = faceIntersects[0].object as THREE.Mesh;
-    intersection.isIntersected = true;
-    intersection.intersectedPosition = faceIntersects[0].point;
-    intersection.clickedFace = intersectedFace.userData["id"];
-    intersection.clickedFaceDir = intersectedFace.userData["dir"];
-  } else {
-    //  console.log('test')
-    intersection.isIntersected = false;
+  if (faceIntersections.length === 0) {
+    return null;
   }
-  return intersection;
+  const cubeIntersects = raycaster.intersectObjects(cubes);
+  const intersectedFace = faceIntersections[0].object as THREE.Mesh;
+  return {
+    intersectedPosition: faceIntersections[0].point,
+    clickedCubePos: cubeIntersects[0].object.position,
+    clickedAxis: intersectedFace.userData["axis"],
+    clickedAxisDir: intersectedFace.userData["dir"],
+  };
 }
 
-function createFace(axis: "x" | "y" | "z") {
-  faceCube = new THREE.Group();
-  const index = Math.round(clickedCubePos[axis]);
-  // console.log(index)
+/**
+ * create a layer based on mouse down  to apply rotation.
+ *
+ * this function  takes an axis and calculates
+ * the position of that axis then creates a
+ * layer including all cubes with that specific position.
+ * @param {Axis} axis the axis to create layer
+ *
+ * @returns None
+ */
+function createlayer(axis: Axis) {
+  layer = new THREE.Group();
+  const index = Math.round(clickedCubePos[axis]); //round the axis position
   cubes.forEach((cube) => {
-    // console.log(Math.round(cube.position[axis]))
     if (Math.round(cube.position[axis]) === index) {
-      faceCube.add(cube);
-    }
+      layer.add(cube);
+    } //add cubes in that specific layer to layer
   });
+  scene.add(layer); //add that layer to scene for rotation and animation
+}
 
-  scene.add(faceCube);
+/**
+ * rotate a layer based on mouse movement.
+ * @param {number} delta  change in mouse position.
+ */
+function rotatelayer(delta: number) {
+  const rotationfactor = 5;
+  layer.rotation[rotationAxis] += layerRotationSign * delta * rotationfactor;
 }
-function rotateFace(delta: number) {
-  faceCube.rotation[rotatelayerKey] += direction * delta * 5;
-}
-function completeRotation() {
+
+/**
+ * Completes the rotation of a face of the cube.
+ *
+ * This function calculates the target rotation angle based on the current rotation
+ * and a snap angle. It then uses a tween to smoothly animate the rotation to
+ * the target angle.
+ *
+ * @returns void
+ */
+function completeLayerRotation() {
   const snapAngle = Math.PI / 2;
-  const threshold = Math.PI / 10;
+  const snapThreshold = Math.PI / 10;
   const startRotation: { x: number; y: number; z: number } = {
     x: 0,
     y: 0,
     z: 0,
   };
   const endRotation: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
-  startRotation[rotatelayerKey] = faceCube.rotation[rotatelayerKey];
-  if (Math.abs(startRotation[rotatelayerKey] % snapAngle) < threshold) {
-    endRotation[rotatelayerKey] =
-      Math.round(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
-  } else if (Math.sign(startRotation[rotatelayerKey] % snapAngle) == -1) {
-    endRotation[rotatelayerKey] =
-      Math.floor(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+  startRotation[rotationAxis] = layer.rotation[rotationAxis];
+  if (Math.abs(startRotation[rotationAxis] % snapAngle) < snapThreshold) {
+    endRotation[rotationAxis] =
+      Math.round(startRotation[rotationAxis] / snapAngle) * snapAngle; //set final position to starting layer position since layer only moved a little
+  } else if (Math.sign(startRotation[rotationAxis] % snapAngle) == -1) {
+    endRotation[rotationAxis] =
+      Math.floor(startRotation[rotationAxis] / snapAngle) * snapAngle; // snap to next multiple of snapangle since cube is rotated right
   } else {
-    endRotation[rotatelayerKey] =
-      Math.ceil(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+    endRotation[rotationAxis] =
+      Math.ceil(startRotation[rotationAxis] / snapAngle) * snapAngle; // snap to previous multiple of snapangle since cube is rotated left
   }
+  //use tween to do smooth rotation
   tween = new TWEEN.Tween(startRotation)
     .to(endRotation, 200)
     .easing(TWEEN.Easing.Linear.None)
     .onUpdate(() => {
-      faceCube.rotation[rotatelayerKey] = startRotation[rotatelayerKey];
-    })
-    .onComplete(() => {
-      faceCube.rotation[rotatelayerKey] = endRotation[rotatelayerKey];
+      layer.rotation[rotationAxis] = startRotation[rotationAxis]; //for smooth rotation
     })
     .start();
 }
 
+/**
+ * Rotates the camera based on mouse movement.
+ * camera revolves around cube always pointing to origin to create an illusion of rotating cube.
+ *
+ * This function calculates the rotation based on the provided delta values
+ * and applies it to the camera's position .
+ *
+ * @param {object} delta - An object containing the change in mouse position.
+ * @param {number} delta.x - The horizontal change in mouse position.
+ * @param {number} delta.y - The vertical change in mouse position.
+ *
+ * @returns void
+ */
 function rotateCamera(delta: { x: number; y: number }) {
-  const targetPosition = new THREE.Vector3(); // Target position
-  const currentPosition = new THREE.Vector3().copy(camera.position); // Current
-  const cameraZ = new THREE.Vector3();
-  const cameraX = new THREE.Vector3();
-  const cameraY = camera.up;
-  camera.getWorldDirection(cameraZ);
-  cameraX.crossVectors(cameraZ, cameraY).normalize();
-  let x = delta.y * 1.3;
-  let y = -delta.x * 1.3;
-  const yQuaternion = new THREE.Quaternion().setFromAxisAngle(cameraY, y * 3);
-  const xQuaternion = new THREE.Quaternion().setFromAxisAngle(cameraX, x * 3);
-  let combined = new THREE.Quaternion().multiplyQuaternions(
-    xQuaternion,
-    yQuaternion,
+  const rotationfactor = 1.3; //controls the rotation speed
+  const cameraDirection = new THREE.Vector3();
+  const cameraRight = new THREE.Vector3();
+  const camraUp = camera.up.clone();
+  camera.getWorldDirection(cameraDirection); //get cameras forward direction
+  cameraRight.crossVectors(cameraDirection, camraUp).normalize(); //normalize for consistent length
+  let rotationAngleX = delta.y * rotationfactor;
+  let rotationAngleY = -delta.x * rotationfactor;
+  //Create rotation quaternions for X and Y axes.
+  const rotationQuaternionY = new THREE.Quaternion().setFromAxisAngle(
+    camraUp,
+    rotationAngleY * 3,
   );
-  combined.normalize();
-  targetPosition.copy(currentPosition).applyQuaternion(combined);
-  const offset = camera.position;
-  offset.applyQuaternion(combined);
-  camera.position.copy(offset);
+  const rotationQuaternionX = new THREE.Quaternion().setFromAxisAngle(
+    cameraRight,
+    rotationAngleX * 3,
+  );
+  //combine quaternion rotations
+  const combinedRotation = new THREE.Quaternion().multiplyQuaternions(
+    rotationQuaternionX,
+    rotationQuaternionY,
+  );
+  camera.position.applyQuaternion(combinedRotation); //apply quaternion to camera to get new camera position
+  camera.up.applyQuaternion(combinedRotation); //to keep the up vector stable
   camera.lookAt(new THREE.Vector3(0, 0, 0));
-  camera.up.applyQuaternion(combined);
 }
