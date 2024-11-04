@@ -132,9 +132,18 @@ function addEventListeners(): void {
   rendererCanvas.addEventListener("mousedown", onMouseDown);
   rendererCanvas.addEventListener("mouseup", onMouseUp);
   rendererCanvas.addEventListener("mousemove", onMouseMove);
-  rendererCanvas.addEventListener("touchstart", onMouseDown);
-  rendererCanvas.addEventListener("touchend", onMouseUp);
-  rendererCanvas.addEventListener("touchmove", onMouseMove);
+  rendererCanvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    onMouseDown(e);
+  });
+  rendererCanvas.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    onMouseUp(e);
+  });
+  rendererCanvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    onMouseMove(e);
+  });
 }
 
 function updateMousePosition(event: MouseEvent | TouchEvent): void {
@@ -374,6 +383,7 @@ function rotateFace(delta: number) {
 }
 function completeRotation() {
   const snapAngle = Math.PI / 2;
+  const threshold = Math.PI / 10;
   const startRotation: { x: number; y: number; z: number } = {
     x: 0,
     y: 0,
@@ -381,8 +391,16 @@ function completeRotation() {
   };
   const endRotation: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
   startRotation[rotatelayerKey] = faceCube.rotation[rotatelayerKey];
-  endRotation[rotatelayerKey] =
-    Math.round(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+  if (Math.abs(startRotation[rotatelayerKey] % snapAngle) < threshold) {
+    endRotation[rotatelayerKey] =
+      Math.round(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+  } else if (Math.sign(startRotation[rotatelayerKey] % snapAngle) == -1) {
+    endRotation[rotatelayerKey] =
+      Math.floor(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+  } else {
+    endRotation[rotatelayerKey] =
+      Math.ceil(startRotation[rotatelayerKey] / snapAngle) * snapAngle;
+  }
   tween = new TWEEN.Tween(startRotation)
     .to(endRotation, 200)
     .easing(TWEEN.Easing.Linear.None)
