@@ -40,32 +40,51 @@ init();
  */
 function init() {
   // Initialize camera and set its position
-  zoom = 8;
+  zoom = 10;
   camera = new THREE.PerspectiveCamera(
-    90,
+    45,
     window.innerWidth / window.innerHeight,
     0.1,
-    100,
+    1000,
   );
-  camera.position.z = zoom;
+  const pos = Math.sqrt((zoom * zoom) / 3);
+  camera.position.z = pos;
+  camera.position.y = pos;
+  camera.position.x = pos;
   camera.lookAt(0, 0, 0);
 
   // Renderer setup with the canvas
-  renderer = new THREE.WebGLRenderer({ canvas: rendererCanvas });
+  renderer = new THREE.WebGLRenderer({
+    canvas: rendererCanvas,
+    antialias: true,
+  });
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   /**
    * Create and add cubes to the scene.
    */
-  let cubeSize = 0.98;
   const materials = [
-    new THREE.MeshBasicMaterial({ color: 0x55ff55 }),
-    new THREE.MeshBasicMaterial({ color: 0x5555ff }),
-    new THREE.MeshBasicMaterial({ color: 0xffff55 }),
-    new THREE.MeshBasicMaterial({ color: 0xffffff }),
-    new THREE.MeshBasicMaterial({ color: 0xff5555 }),
-    new THREE.MeshBasicMaterial({ color: 0xffa555 }),
+    new THREE.MeshBasicMaterial({ color: 0x55ff55 }), // Green
+    new THREE.MeshBasicMaterial({ color: 0x5555ff }), // Blue
+    new THREE.MeshBasicMaterial({ color: 0xffff55 }), // Yellow
+    new THREE.MeshBasicMaterial({ color: 0xffffff }), // White
+    new THREE.MeshBasicMaterial({ color: 0xff5555 }), // Red
+    new THREE.MeshBasicMaterial({ color: 0xffa555 }), // Orange
+    new THREE.MeshBasicMaterial({ color: 0x000000 }), // Black - for inactive sides
   ];
+
+  const cubeSize = 0.98;
+
+  // Define which material index corresponds to which face for clarity
+  const FACE_MATERIALS = {
+    RIGHT: 0, // Green
+    LEFT: 1, // Blue
+    TOP: 2, // Yellow
+    BOTTOM: 3, // White
+    FRONT: 4, // Red
+    BACK: 5, // Orange
+    INACTIVE: 6, // Black
+  };
 
   // Loop through x, y, z coordinates to create and position cubes
   for (let x = -1; x <= 1; x++) {
@@ -77,11 +96,31 @@ function init() {
           cubeSize,
         );
         const cube = new THREE.Mesh(cubeGeometry);
-        // Assign materials to cube faces
+
+        // Determine the material index for each face based on its position
+        const materialIndices = [
+          FACE_MATERIALS.INACTIVE, // Right face
+          FACE_MATERIALS.INACTIVE, // Left face
+          FACE_MATERIALS.INACTIVE, // Top face
+          FACE_MATERIALS.INACTIVE, // Bottom face
+          FACE_MATERIALS.INACTIVE, // Front face
+          FACE_MATERIALS.INACTIVE, // Back face
+        ];
+
+        // Assign specific material indices based on position
+        if (x === 1) materialIndices[0] = FACE_MATERIALS.RIGHT; // Right face
+        if (x === -1) materialIndices[1] = FACE_MATERIALS.LEFT; // Left face
+        if (y === 1) materialIndices[2] = FACE_MATERIALS.TOP; // Top face
+        if (y === -1) materialIndices[3] = FACE_MATERIALS.BOTTOM; // Bottom face
+        if (z === 1) materialIndices[4] = FACE_MATERIALS.FRONT; // Front face
+        if (z === -1) materialIndices[5] = FACE_MATERIALS.BACK; // Back face
+
+        // Assign materials to cube faces using the calculated indices
         for (let i = 0; i < cubeGeometry.groups.length; i++) {
-          cube.geometry.groups[i].materialIndex = i;
+          cube.geometry.groups[i].materialIndex = materialIndices[i];
         }
-        cube.material = materials;
+        cube.material = materials; // Assign the materials array to the cube
+
         cube.position.set(x, y, z);
         cubes.push(cube);
         scene.add(cube);
@@ -158,6 +197,20 @@ function addEventListeners(): void {
   rendererCanvas.addEventListener("touchstart", handleTouchStart);
   rendererCanvas.addEventListener("touchend", handleTouchEnd);
   rendererCanvas.addEventListener("touchmove", handleTouchMove);
+  const zoomSlider = document.getElementById("zoom-slider") as HTMLInputElement;
+
+  zoomSlider.addEventListener("input", () => {
+    const sliderValue = 100 - parseFloat(zoomSlider.value);
+    const zoomMin = 3;
+    const zoomMax = 41;
+    const lastzoom = zoom;
+    zoom = zoomMin + (zoomMax - zoomMin) * (sliderValue / 100);
+
+    camera.position.z = (camera.position.z * zoom) / lastzoom;
+    camera.position.x = (camera.position.x * zoom) / lastzoom;
+    camera.position.y = (camera.position.y * zoom) / lastzoom;
+    camera.lookAt(0, 0, 0);
+  });
 }
 
 /**

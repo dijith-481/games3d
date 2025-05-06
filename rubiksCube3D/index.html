@@ -6,8 +6,25 @@
     <title>3d Cube</title>
     <link rel="icon" href="public/logo.png" type="image/png" />
   </head>
-  <body>
-    <canvas id="rendererCanvas"></canvas>
+  <body style="background-color: black">
+    <canvas
+      style="
+        position: fixed;
+        left: 0px;
+        bottom: 0px;
+        width: 100vw;
+        height: 100vh;
+      "
+      id="rendererCanvas"
+    ></canvas>
+    <input
+      type="range"
+      style="position: fixed; left: 0px; bottom: 0px"
+      id="zoom-slider"
+      min="1"
+      max="100"
+      value="40"
+    />
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
